@@ -11,3 +11,5 @@ Use **+ Scene** to capture the current view and **Update** to refresh the select
 The tested version is IngeTrazo 0.5.10.1. Scene settings are stored in the IGZ. The axes checkbox saves axis visibility. Hidden geometry recall is scoped to the model root and identifies geometry by coordinates. Playback switches between saved views every two seconds.
 
 License: GPL-3.0-or-later.
+
+![FGId Scenes panel in IngeTrazo](screenshots/fgid-scenes.png)
