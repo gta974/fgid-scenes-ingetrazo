@@ -91,7 +91,7 @@ def install_recall():
                 selected.hidden_shown["objects"] = scene.show_hidden_objects
             if not enabled.get("geometry", True):
                 selected.hidden_shown["geometry"] = scene.show_hidden_geometry
-        # Respect the original SketchUp scene flags, intersected with our checkboxes.
+        # Respect the scene flags imported with the .skp file, intersected with our checkboxes.
         skp = (view.section or {}).get("fgid_skp_state")
         if skp:
             selected.section = dict(view.section)
