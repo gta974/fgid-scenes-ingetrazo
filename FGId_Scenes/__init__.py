@@ -64,6 +64,9 @@ def restore_geometry(scene, snapshot):
 
 
 def install_recall():
+    if hasattr(SavedView, "apply_state"):
+        install_native_recall()
+        return
     original = SavedView.apply
     if getattr(original, "_fgid_scenes", False):
         return
@@ -119,22 +122,7 @@ class SceneControls(QWidget):
         self.play_scene = None
         self.timer = QTimer(self, interval=2000)
         self.timer.timeout.connect(self.advance)
-        form = QFormLayout(self)
-        self.name = QLineEdit()
-        self.description = QLineEdit()
-        self.include = QCheckBox("Include in animation")
-        form.addRow(self.include)
-        form.addRow("Name", self.name)
-        form.addRow("Description", self.description)
-        self.checks = {}
-        for key, label in PROPERTIES.items():
-            box = QCheckBox(label)
-            self.checks[key] = box
-            form.addRow(box)
-            box.toggled.connect(self.save)
-        self.name.editingFinished.connect(self.rename)
-        self.description.editingFinished.connect(self.save)
-        self.include.toggled.connect(self.save)
+        self.build_form()
         panel.list.currentItemChanged.connect(self.sync)
         panel.list.setIconSize(QSize(80, 54))
 
@@ -179,6 +167,24 @@ class SceneControls(QWidget):
             if button.text() in (add, update):
                 button.clicked.connect(self.after_add if button.text() == add else self.capture)
         self.refresh()
+
+    def build_form(self):
+        form = QFormLayout(self)
+        self.name = QLineEdit()
+        self.description = QLineEdit()
+        self.include = QCheckBox("Include in animation")
+        form.addRow(self.include)
+        form.addRow("Name", self.name)
+        form.addRow("Description", self.description)
+        self.checks = {}
+        for key, label in PROPERTIES.items():
+            box = QCheckBox(label)
+            self.checks[key] = box
+            form.addRow(box)
+            box.toggled.connect(self.save)
+        self.name.editingFinished.connect(self.rename)
+        self.description.editingFinished.connect(self.save)
+        self.include.toggled.connect(self.save)
 
     def current(self):
         item = self.panel.list.currentItem()
@@ -283,8 +289,107 @@ class SceneControls(QWidget):
         self.play_index = -1
 
 
+def install_native_recall():
+    original_camera = SavedView.apply_camera
+    original_state = SavedView.apply_state
+    if getattr(original_state, "_fgid_scenes", False):
+        return
+
+    def apply_camera(view, camera):
+        if metadata(view).get("properties", {}).get("camera", True):
+            return original_camera(view, camera)
+
+    def apply_state(view, scene, put_style=None):
+        data = metadata(view)
+        if not data:
+            return original_state(view, scene, put_style)
+        enabled = data.get("properties", {})
+        selected = copy(view)
+        if not enabled.get("tags", True):
+            selected.hidden_layers = [layer.name for layer in scene.layers if not layer.visible]
+        for prop, field in (("style", "style"), ("shadows", "shadows"),
+                            ("georef", "georef"), ("objects", "hidden_objects"),
+                            ("cuts", "section")):
+            if not enabled.get(prop, True):
+                setattr(selected, field, None)
+        if view.hidden_shown:
+            selected.hidden_shown = dict(view.hidden_shown)
+            if not enabled.get("objects", True):
+                selected.hidden_shown["objects"] = scene.show_hidden_objects
+            if not enabled.get("geometry", True):
+                selected.hidden_shown["geometry"] = scene.show_hidden_geometry
+        original_state(selected, scene, put_style)
+        if enabled.get("geometry", True) and "geometry" in data and scene.edit_group is None:
+            restore_geometry(scene, data["geometry"])
+        if enabled.get("axes", True) and "axes" in data:
+            scene.show_axes = data["axes"]
+
+    apply_state._fgid_scenes = True
+    SavedView.apply_camera = apply_camera
+    SavedView.apply_state = apply_state
+
+
+class TreeSceneControls(SceneControls):
+    def __init__(self, panel):
+        QWidget.__init__(self, panel)
+        self.panel = panel
+        self.syncing = False
+        self.build_form()
+        self.name.setReadOnly(True)
+        self.include.hide()
+        panel.tree.currentItemChanged.connect(self.sync)
+        panel.layout().addWidget(self)
+        add, update, show = panel._on_add, panel.update_view, panel.show_view
+
+        def add_view(*args, **kwargs):
+            view = add(*args, **kwargs)
+            self.capture_view(view)
+            return view
+
+        def update_view(view):
+            update(view)
+            if view is not None:
+                self.capture_view(view)
+
+        def show_view(view, animate=True):
+            camera = view is None or metadata(view).get("properties", {}).get("camera", True)
+            return show(view, animate=animate and camera)
+
+        panel.add_btn.clicked.disconnect()
+        panel.add_btn.clicked.connect(lambda _checked=False: add_view())
+        panel._on_add = add_view
+        panel.update_view = update_view
+        panel.show_view = show_view
+        self.sync()
+
+    def current(self):
+        return self.panel.current_view()
+
+    def save(self, *_):
+        view = self.current()
+        if self.syncing or view is None:
+            return
+        data = dict(metadata(view))
+        data.update(description=self.description.text(),
+                    properties={key: box.isChecked() for key, box in self.checks.items()})
+        view.section = {**(view.section or {}), KEY: data}
+        self.panel._touch()
+
+    def capture_view(self, view):
+        scene = self.panel._scene()
+        data = dict(metadata(view))
+        if scene.edit_group is None:
+            data["geometry"] = capture_geometry(scene)
+        data["axes"] = scene.show_axes
+        view.section = {**(view.section or {}), KEY: data}
+        self.panel._touch()
+        self.sync()
+
+
 def setup(app):
     install_recall()
     panel = app.window.tray.scenes
     if not hasattr(panel, "_fgid_scene_controls"):
-        panel._fgid_scene_controls = SceneControls(panel)
+        controls = TreeSceneControls if hasattr(panel, "tree") else SceneControls
+        panel._fgid_scene_controls = controls(panel)
+
