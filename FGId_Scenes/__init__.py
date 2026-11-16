@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene properties and thumbnails for the IngeTrazo Scenes tray."""
 from copy import copy
+from inspect import signature
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
@@ -71,10 +72,13 @@ def install_recall():
     if getattr(original, "_fgid_scenes", False):
         return
 
-    def apply(view, scene, camera):
+    accepts_style = "put_style" in signature(original).parameters
+
+    def apply(view, scene, camera, put_style=None):
+        style_args = (put_style,) if accepts_style else ()
         data = metadata(view)
         if not data:
-            return original(view, scene, camera)
+            return original(view, scene, camera, *style_args)
         enabled = data.get("properties", {})
         selected = copy(view)
         if not enabled.get("camera", True):
@@ -104,7 +108,7 @@ def install_recall():
             state["use"] = {flag: value and enabled.get(props.get(flag), True)
                             for flag, value in skp.get("use", {}).items()}
             selected.section["fgid_skp_state"] = state
-        original(selected, scene, camera)
+        original(selected, scene, camera, *style_args)
         if enabled.get("geometry", True) and "geometry" in data and scene.edit_group is None:
             restore_geometry(scene, data["geometry"])
         if enabled.get("axes", True) and "axes" in data:
